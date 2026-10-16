@@ -1,0 +1,16 @@
+{
+  "name": "agent-link",
+  "private": true,
+  "engines": {
+    "node": ">=22.13"
+  },
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "start": "npm start -w server",
+    "dev:web": "npm run dev -w web",
+    "test": "npm test -w server && npm test -w web && node --test agent/test"
+  }
+}

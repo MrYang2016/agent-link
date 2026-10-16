@@ -1,0 +1,188 @@
+:root {
+  --canvas: oklch(0.955 0.02 88);
+  --surface: oklch(0.985 0.012 90);
+  --ink: oklch(0.27 0.028 55);
+  --muted: oklch(0.4 0.03 58);
+  --line: oklch(0.86 0.022 82);
+  --action: oklch(0.46 0.15 42);
+  --action-ink: oklch(0.97 0.015 90);
+  --action-press: oklch(0.39 0.13 42);
+  --error: oklch(0.4 0.15 25);
+  --error-surface: oklch(0.94 0.035 25);
+  --signal: oklch(0.93 0.035 210);
+  --signal-ink: oklch(0.3 0.05 230);
+  --signal-line: oklch(0.78 0.04 215);
+  color: var(--ink);
+  background: var(--canvas);
+  font-family: "Iowan Old Style", Palatino, "Palatino Linotype", "Songti SC", serif;
+  line-height: 1.5;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(ellipse 70rem 24rem at 50% -8rem, oklch(0.9 0.05 55 / 0.45), transparent 70%),
+    var(--canvas);
+}
+
+a { color: var(--action); }
+
+button, input { font: inherit; }
+
+button {
+  background: var(--action);
+  color: var(--action-ink);
+  border: 0;
+  border-radius: 2px;
+  padding: 0.55rem 1rem;
+  cursor: pointer;
+  font-family: "Avenir Next", "PingFang SC", sans-serif;
+}
+
+button:hover { background: var(--action-press); }
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--action);
+  outline-offset: 3px;
+}
+
+button[type="button"] {
+  background: transparent;
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+button[type="button"]:hover { background: var(--surface); }
+
+input {
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--surface);
+  color: var(--ink);
+}
+
+input:focus-visible { outline-offset: 2px; }
+
+.shell {
+  max-width: 42rem;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 4.5rem;
+}
+
+.top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1.5rem;
+  margin-bottom: 2.75rem;
+  padding-bottom: 0.9rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.mark {
+  font-family: "Avenir Next", "PingFang SC", sans-serif;
+  font-size: 0.95rem;
+  letter-spacing: -0.03em;
+  color: var(--ink);
+}
+
+nav {
+  display: flex;
+  gap: 1.1rem;
+  font-family: "Avenir Next", "PingFang SC", sans-serif;
+  font-size: 0.92rem;
+}
+
+nav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+nav a.router-link-exact-active {
+  color: var(--action);
+  text-decoration: underline;
+  text-underline-offset: 0.28rem;
+}
+
+h1 {
+  font-weight: 560;
+  font-size: 2.15rem;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  margin: 0 0 1.25rem;
+}
+
+label {
+  display: block;
+  margin: 1rem 0;
+  font-family: "Avenir Next", "PingFang SC", sans-serif;
+  font-size: 0.92rem;
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1.25rem;
+  padding: 0.95rem 0;
+  border-top: 1px solid var(--line);
+}
+
+.channel-id {
+  display: inline-block;
+  margin-top: 0.2rem;
+  color: var(--signal-ink);
+  background: var(--signal);
+  padding: 0.05rem 0.4rem;
+  font-family: "IBM Plex Mono", "Source Code Pro", ui-monospace, monospace;
+  font-size: 0.82rem;
+}
+
+.muted { color: var(--muted); }
+
+.error {
+  color: var(--error);
+  background: var(--error-surface);
+  margin: 1rem 0 0;
+  padding: 0.65rem 0.75rem;
+}
+
+code, #install-command, #agent-token {
+  display: block;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: var(--signal);
+  color: var(--signal-ink);
+  border: 1px solid var(--signal-line);
+  padding: 0.8rem;
+  font-family: "IBM Plex Mono", "Source Code Pro", ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.credential {
+  margin-top: 1.4rem;
+}
+
+.credential p:first-child {
+  margin-bottom: 0.35rem;
+  font-family: "Avenir Next", "PingFang SC", sans-serif;
+  font-size: 0.92rem;
+}
+
+.pager {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.4rem;
+}
+
+@media (max-width: 40rem) {
+  .top { align-items: flex-start; flex-direction: column; gap: 0.7rem; }
+  .row { flex-direction: column; gap: 0.35rem; }
+}
