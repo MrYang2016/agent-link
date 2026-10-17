@@ -34,6 +34,10 @@ function sessionIdentity(client, input) {
   return { sessionId, key: `${client}:${sessionId}` };
 }
 
+function invokedByCursor(client, input) {
+  return client !== 'cursor' && input && typeof input.cursor_version === 'string' && input.cursor_version.length > 0;
+}
+
 function readJsonFile(file) {
   if (!fs.existsSync(file)) return {};
   try {
@@ -54,7 +58,9 @@ function statePath(dir, explicit) {
 }
 
 function markBusy({ client, stdin, dir, statePath: explicit }) {
-  const identity = sessionIdentity(client, parseStdin(stdin));
+  const input = parseStdin(stdin);
+  if (invokedByCursor(client, input)) return false;
+  const identity = sessionIdentity(client, input);
   if (!identity) return false;
   const file = statePath(dir || homeDir(), explicit);
   const state = readJsonFile(file);
@@ -64,7 +70,9 @@ function markBusy({ client, stdin, dir, statePath: explicit }) {
 }
 
 function clearBusy({ client, stdin, dir, statePath: explicit }) {
-  const identity = sessionIdentity(client, parseStdin(stdin));
+  const input = parseStdin(stdin);
+  if (invokedByCursor(client, input)) return false;
+  const identity = sessionIdentity(client, input);
   if (!identity) return false;
   const file = statePath(dir || homeDir(), explicit);
   if (!fs.existsSync(file)) return false;
@@ -432,4 +440,5 @@ module.exports = {
   runWatch,
   startWatchProcess,
   sessionIdentity,
+  invokedByCursor,
 };

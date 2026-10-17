@@ -1,7 +1,7 @@
 'use strict';
 
 const { formatStopOutput } = require('./followup');
-const { clearBusy } = require('./watch');
+const { clearBusy, invokedByCursor } = require('./watch');
 
 function parseStdin(stdin) {
   if (stdin && typeof stdin === 'object') return stdin;
@@ -35,6 +35,9 @@ async function readPayload(result) {
 
 async function resolveStop({ client, stdin, config, readPending, clearPending, readBindings, writeBindings, request }) {
   const input = parseStdin(stdin);
+  if (invokedByCursor(client, input)) {
+    return { pulled: false, messages: [] };
+  }
   if (client === 'cursor' && input.status === 'aborted') {
     return { pulled: false, messages: [] };
   }

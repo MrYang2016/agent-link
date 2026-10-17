@@ -903,6 +903,8 @@ describe('install and pages', () => {
     expect(res.text).toContain('--server');
     expect(res.text).toContain('command -v pi');
     expect(res.text).toContain('PI_ON_PATH=false');
+    expect(res.text).toContain('.pi/agent');
+    expect(res.text).toContain('versions/node/*/bin/pi');
     expect(res.text).toContain('/install/files/');
     expect(res.text).toContain('agent-link 已安装');
     expect(res.text).toContain('不用再单独配置');

@@ -329,6 +329,23 @@ test('mark-busy cursor writes that session as busy and keeps another session', (
   }
 });
 
+test('mark-busy claude-code ignores a Cursor payload', () => {
+  const dir = directory();
+  try {
+    assert.equal(
+      markBusy({
+        client: 'claude-code',
+        stdin: { session_id: 'conv-9', cursor_version: '3.24.12' },
+        dir,
+      }),
+      false,
+    );
+    assert.equal(fs.existsSync(path.join(dir, 'session-state.json')), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('mark-busy claude-code writes that session as busy', () => {
   const dir = directory();
   try {

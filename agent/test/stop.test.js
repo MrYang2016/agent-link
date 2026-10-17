@@ -490,6 +490,25 @@ test('stop.js keeps a different session marked busy', async () => {
   }
 });
 
+test('claude-code stop ignores a Cursor payload and leaves the pending bind', async () => {
+  const dir = directory();
+  try {
+    writeBindings(dir, { 'cursor:conv-9': { companyId: 'default', channelId: 'ch-1' } });
+    prepareBind('ch-1', true, dir);
+    const result = await stopIn(dir, {
+      client: 'claude-code',
+      stdin: { session_id: 'conv-9', conversation_id: 'conv-9', cursor_version: '3.24.12' },
+    });
+    assert.deepEqual(result.output, {});
+    assert.deepEqual(result.urls, []);
+    assert.equal(fs.existsSync(pendingPath(dir)), true);
+    assert.deepEqual(readBindings(dir)['cursor:conv-9'], { companyId: 'default', channelId: 'ch-1' });
+    assert.equal(readBindings(dir)['claude-code:conv-9'], undefined);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('stop.js removes the Claude Code busy key after it outputs', async () => {
   const dir = directory();
   try {
