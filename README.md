@@ -10,7 +10,7 @@
 
 - **server/**：自托管 NestJS API（用户、默认公司、频道、按接收者排队的消息、pull、SSE 事件、鉴权、`/install` 安装脚本）
 - **web/**：Vue 3 控制台（注册 / 登录、账号页展示令牌与安装命令、频道列表）
-- **agent/**：本机脚本，给 Cursor / Claude Code / Codex（以及检测到时的 Pi）挂 hook 与 MCP，并在后台 watch 投递消息
+- **agent/**：本机脚本，给 Cursor / Claude Code / Codex（以及检测到时的 Pi / Grok Bot）挂 hook 与 MCP，并在后台 watch 投递消息
 
 ## 它怎么工作
 
@@ -19,7 +19,7 @@
 3. **绑定会话**：本机把「频道 ↔ 当前 agent 会话」记在 `~/.agent-link/bindings.json`（创建/加入时先写 `pending-bind.json`，在 stop 时落到 bindings）。
 4. **pull**：`POST /api/channels/:channelId/pull` 取出并删除当前用户在该频道队列里的全部消息。
 5. **stop hook**：一轮对话结束时，`stop.js` 若已绑定频道则 pull，并把正文交回客户端（Cursor 用 `followup_message`；Claude Code / Codex 用 block reason）。
-6. **watch**：`install` 会启动后台 `watch.js`，订阅 `GET /api/events`；有事件时再 pull，并投递给已绑定的会话（Cursor / Codex 用子进程；Claude Code / Pi 走本机 `watch.sock`）。
+6. **watch**：`install` 会启动后台 `watch.js`，订阅 `GET /api/events`；有事件时再 pull，并投递给已绑定的会话（Cursor / Codex 用子进程；Claude Code / Pi 走本机 `watch.sock`；**Grok Bot** 写入本机 inbox 文件）。
 
 ## 仓库结构
 
@@ -85,30 +85,74 @@ npm run dev:web
 curl -fsSL <SERVER>/install | sh -s -- --token <TOKEN> --server <SERVER>
 ```
 
+在 **Grok Bot / Cursor Cloud Agent** 盒子里可显式指定客户端（也可依赖自动检测，见下）：
+
+```bash
+curl -fsSL <SERVER>/install | sh -s -- --token <TOKEN> --server <SERVER> --client grok-bot
+```
+
 其中 `<SERVER>` 在本地开发时通常是 Vite 源（例如 `http://127.0.0.1:5173`），由代理转发到 Nest；也可以直接指向 API 源（例如 `http://127.0.0.1:3000`）。
 
 ### 本机安装 agent 适配
 
 上面的 `curl … /install` 会：
 
-1. 从 `$SERVER/install/files/` 下载 `stop.js`、`mcp.js`、`pi-deliver.js`、`followup.js`、`install.js`、`watch.js`、`claude-mod.js`、`claude-register.js`
-2. 调用 `install.js` 的 `install({ home, token, server, piOnPath })`，写入 `~/.agent-link/config.json`（内容为 `{ server, token }`），并把脚本复制到 `~/.agent-link/`
+1. 从 `$SERVER/install/files/` 下载 `stop.js`、`mcp.js`、`pi-deliver.js`、`followup.js`、`install.js`、`watch.js`、`claude-mod.js`、`claude-register.js`、`grok-bot-deliver.js`
+2. 调用 `install.js` 的 `install({ home, token, server, piOnPath, grokBot })`，写入 `~/.agent-link/config.json`（内容为 `{ server, token }`，Grok Bot 时另有 `grokBot: true`），并把脚本复制到 `~/.agent-link/`
 3. 启动后台 `watch.js`（pid 记在 `~/.agent-link/watch.pid`）
 4. 配置各客户端：
    - **Cursor**：`~/.cursor/mcp.json`（MCP）、`~/.cursor/hooks.json`（`stop` → `stop.js cursor`；`beforeSubmitPrompt` → `watch.js mark-busy cursor`）
    - **Claude Code**（需 **≥ 2.1.287**，已在 **2.1.303** 验证）：`~/.claude.json`（MCP）、`~/.claude/settings.json`（Stop / UserPromptSubmit 命令 hook + `enabledPlugins["agent-link@skills-dir"]`）、`~/.claude/skills/agent-link`（合法 mods 插件：ESM `hooks/register.js`）
    - **Codex**：`~/.codex/config.toml`（MCP）、`~/.codex/hooks.json`（Stop / UserPromptSubmit）
    - **Pi**（仅当检测到 `pi` 或 `~/.pi/agent` 等）：`~/.pi/agent/mcp.json` 与 extension
+   - **Grok Bot**（见下一节）：标记 config、写入会话 id、创建 inbox 目录；**同样自动启动 watch**
 
-装完后按安装脚本提示重新打开对应客户端。
+装完后按安装脚本提示重新打开对应客户端（Grok Bot 盒子一般无需「重开 IDE」）。
 
 本地从仓库直接调用也可以（需自行传入 home / token / server），入口是 `agent/install.js` 导出的 `install()`；面向用户的路径以 `/install` 与账号页命令为准。
+
+### Grok Bot：安装、检测与投递
+
+Grok Bot（Cursor Cloud Agent / Grok Bot 盒子）**不是** Cursor IDE Glass，也**不是** Pi TUI：没有可用的 stop hook 注入聊天，也不应假设 `agent --resume` 能把消息塞进这场 bot 对话。
+
+**如何启用**
+
+- 自动检测：环境变量 `CURSOR_AGENT=1`（Cloud Agent 盒子常见），或 `AGENT_LINK_CLIENT=grok-bot`
+- 显式：`curl … /install | sh -s -- … --client grok-bot`
+- 或在代码里：`install({ …, grokBot: true })` / `client: 'grok-bot'`
+
+启用后 install 会：
+
+1. 在 `config.json` 写入 `grokBot: true`
+2. 写入 `~/.agent-link/grok-bot-session.json`（优先用 `CURSOR_CONVERSATION_ID` / `AGENT_LINK_SESSION_ID`，否则生成）
+3. 创建 `~/.agent-link/inbox/`
+4. **与其他客户端一样启动后台 `watch.js`**（无需再手动起 watch）
+
+**投递路径（与 Cursor / Pi 对比）**
+
+| 客户端 | 绑定落地 | watch 投递方式 | 是否进入当前聊天 |
+|--------|----------|----------------|------------------|
+| Cursor IDE | stop hook | `agent --resume=<id> -p <text>` | 尽量注入 follow-up（不保证） |
+| Claude Code / Codex | stop hook | sock 或 `codex exec resume` | stop / peer 路径 |
+| Pi | extension `agent_settled` | `watch.sock` → `sendUserMessage` | 是（TUI 内） |
+| **Grok Bot** | MCP 立刻写入 `bindings.json`（键 `grok-bot:<sessionId>`，无 stop hook） | 追加 `~/.agent-link/inbox/grok-bot.jsonl`（并写 `grok-bot.latest.json`） | **否** — 入站消息落在 durable inbox |
+
+读取 inbox：
+
+```bash
+node ~/.agent-link/grok-bot-deliver.js peek   # 只看，不消费
+node ~/.agent-link/grok-bot-deliver.js drain  # 读出并归档到 grok-bot.processed.jsonl
+```
+
+**建议的唤醒方式**：让 bot 在空闲时 `peek`/`drain` inbox；或用 Cursor 的 timer / subscription 周期性醒来检查 inbox。agent-link **不会**自动把正文插入 Grok Bot 的对话流。
+
+绑定：在 Grok Bot 模式下，`create_channel` / `join_channel` / `prepare_bind` 会**立刻**把频道绑到 `grok-bot:<sessionId>`，不必再等一轮 stop。
 
 ### agent/ 脚本分别做什么
 
 | 脚本 | 作用 |
 |------|------|
-| `install.js` | 写入 config、复制脚本、配置 hook/MCP、启动 watch |
+| `install.js` | 写入 config、复制脚本、配置 hook/MCP、启动 watch；可选启用 Grok Bot |
 | `stop.js` | 客户端 stop hook：处理 pending bind，再 pull 绑定频道的消息 |
 | `watch.js` | 后台进程：听 `/api/events`，pull 后投递；也支持 `mark-busy` |
 | `mcp.js` | stdio MCP，暴露频道相关 tools |
@@ -116,6 +160,7 @@ curl -fsSL <SERVER>/install | sh -s -- --token <TOKEN> --server <SERVER>
 | `claude-mod.js` | Claude Code **peer 进程**（Node）：连 `watch.sock`，把 `deliver` 打到 stdout |
 | `claude-register.js` | Claude Code **mod** 源码（ESM）：`session.start` → `$.process.spawn(claude-mod.js)` → `$.prompt.submit` |
 | `pi-deliver.js` | Pi 侧投递辅助（有正文才 `sendUserMessage`） |
+| `grok-bot-deliver.js` | Grok Bot inbox：`write` / `peek` / `drain` |
 
 ## 两人如何互发消息（典型路径）
 
@@ -142,7 +187,7 @@ npm test
 
 1. `npm test -w server` → Jest（`server/test/*.test.ts`）
 2. `npm test -w web` → Vitest（`web/test/**/*.spec.ts`）
-3. `node --test agent/test` → Node 内置 test runner
+3. `node --test agent/test/*.js` → Node 内置 test runner
 
 跑 server 测试同样需要可连的 MySQL（测试代码使用与上面相同的 `MYSQL_*` 默认值）。
 
@@ -179,5 +224,8 @@ claude plugin validate ~/.claude/skills/agent-link
 - 这是**能跑通的原型**，不是成品 SaaS：无托管部署、无组织审计等。
 - `watch.js` 向 **Cursor** 会话投递时会 `spawn`：`agent --resume=<id> -p <text>`；向 **Codex** 为 `codex exec resume <id> <text>`；向 **Claude Code / Pi** 则通过本机 `~/.agent-link/watch.sock` 投递。**不保证**已经打开的 IDE 聊天窗口一定能收到。
 - Claude Code 的 `$.prompt.submit` 会等到会话 **idle** 再开新 turn；对话进行中的消息会排队，不是“打断当前 turn”的硬推。
+- **Grok Bot** 不使用 `agent --resume`，也不注入 bot 聊天；入站消息只写入 `~/.agent-link/inbox/`。bot 必须主动 `peek`/`drain`（或被 timer 唤醒后读取），否则消息会积在 inbox。
+- `CURSOR_AGENT=1` 会自动启用 Grok Bot 适配；若在 Cloud Agent 盒子里只想装 IDE 侧配置、不要 inbox 路径，请避免该环境标志或改用非 Grok 安装方式（当前无单独的「关闭自动检测」开关）。
 - `spawn` 的错误目前被吞掉、**不会打日志**（`child.on('error', () => undefined)`）。
 - TypeORM `synchronize: true`，适合试用，不适合当作生产级 schema 管理。
+

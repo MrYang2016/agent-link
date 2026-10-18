@@ -905,6 +905,10 @@ describe('install and pages', () => {
     expect(res.text).toContain('PI_ON_PATH=false');
     expect(res.text).toContain('.pi/agent');
     expect(res.text).toContain('versions/node/*/bin/pi');
+    expect(res.text).toContain('--client');
+    expect(res.text).toContain('GROK_BOT=false');
+    expect(res.text).toContain('CURSOR_AGENT');
+    expect(res.text).toContain('grok-bot-deliver.js');
     expect(res.text).toContain('/install/files/');
     expect(res.text).toContain('agent-link 已安装');
     expect(res.text).toContain('不用再单独配置');
@@ -927,6 +931,13 @@ describe('install and pages', () => {
     const res = await request(server).get('/install');
     expect(res.status).toBe(200);
     expect(res.text).toContain('claude-register.js');
+  });
+
+  it('serves grok-bot-deliver.js from GET /install/files/grok-bot-deliver.js', async () => {
+    const res = await request(server).get('/install/files/grok-bot-deliver.js');
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('writeInboxMessage');
+    expect(res.text).toContain('drainInbox');
   });
 
   it('returns 404 for an unknown install file', async () => {

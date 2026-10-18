@@ -8,9 +8,11 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const { messageText } = require('./followup');
+const { writeInboxMessage } = require('./grok-bot-deliver');
 
-const CLIENTS = new Set(['cursor', 'claude-code', 'codex', 'pi']);
+const CLIENTS = new Set(['cursor', 'claude-code', 'codex', 'pi', 'grok-bot']);
 const SOCKET_CLIENTS = new Set(['claude-code', 'pi']);
+const INBOX_CLIENTS = new Set(['grok-bot']);
 
 function homeDir() {
   return process.env.AGENT_LINK_HOME || path.join(os.homedir(), '.agent-link');
@@ -186,7 +188,10 @@ async function deliverChannel(options) {
   if (!binding) return { pulled: false, submitted: false, reason: 'unbound' };
 
   const sessionState = (await readValue(options.sessionState, options.readSessionState)) || {};
-  if (sessionState[binding.key] === 'busy') return { pulled: false, submitted: false, reason: 'busy' };
+  // Grok Bot uses a durable inbox: always pull/write even while "busy".
+  if (!INBOX_CLIENTS.has(binding.client) && sessionState[binding.key] === 'busy') {
+    return { pulled: false, submitted: false, reason: 'busy' };
+  }
 
   if (SOCKET_CLIENTS.has(binding.client) && !peerReady(options.peers, binding.client, binding.sessionId)) {
     return { pulled: false, submitted: false, reason: 'peer' };
@@ -212,6 +217,16 @@ async function deliverChannel(options) {
 
   const text = messageText(messages);
   const spawnProcess = options.spawn || defaultSpawn;
+  if (INBOX_CLIENTS.has(binding.client)) {
+    const writeInbox = options.writeInbox || writeInboxMessage;
+    const written = writeInbox({
+      dir: options.dir,
+      channelId,
+      messages,
+      messageText: text,
+    });
+    return { pulled: true, submitted: written !== false, messages };
+  }
   if (binding.client === 'cursor' || binding.client === 'codex') {
     submitCommand(binding.client, binding.sessionId, text, spawnProcess);
     return { pulled: true, submitted: true, messages };
@@ -342,12 +357,14 @@ async function runWatch(options = {}) {
         deliverChannel({
           channelId: event.channelId,
           config,
+          dir,
           readBindings,
           readSessionState,
           peers,
           request: options.request,
           spawn: options.spawn,
           sendToPeer: options.sendToPeer,
+          writeInbox: options.writeInbox,
         }),
       )
       .catch(() => undefined);
