@@ -1,11 +1,44 @@
 'use strict';
 
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
 const { startWatchProcess } = require('./watch');
 
-const COPIED_FILES = ['stop.js', 'mcp.js', 'pi-deliver.js', 'followup.js', 'watch.js', 'claude-mod.js'];
+const COPIED_FILES = [
+  'stop.js',
+  'mcp.js',
+  'pi-deliver.js',
+  'followup.js',
+  'watch.js',
+  'claude-mod.js',
+  'grok-bot-deliver.js',
+];
+
+function detectGrokBot({ grokBot, client, env = process.env } = {}) {
+  if (grokBot === true) return true;
+  if (client === 'grok-bot') return true;
+  if (env && env.AGENT_LINK_CLIENT === 'grok-bot') return true;
+  // Cloud Agent / Grok Bot boxes set CURSOR_AGENT=1. Under node:test the same
+  // flag is often present in the runner environment; ignore it unless the test
+  // opts in with AGENT_LINK_ALLOW_CURSOR_AGENT=1 (or uses an explicit flag above).
+  if (env && env.CURSOR_AGENT === '1') {
+    if (env.NODE_TEST_CONTEXT && env.AGENT_LINK_ALLOW_CURSOR_AGENT !== '1') return false;
+    return true;
+  }
+  return false;
+}
+
+function resolveGrokBotSessionId(env = process.env) {
+  if (env && typeof env.CURSOR_CONVERSATION_ID === 'string' && env.CURSOR_CONVERSATION_ID.length > 0) {
+    return env.CURSOR_CONVERSATION_ID;
+  }
+  if (env && typeof env.AGENT_LINK_SESSION_ID === 'string' && env.AGENT_LINK_SESSION_ID.length > 0) {
+    return env.AGENT_LINK_SESSION_ID;
+  }
+  return null;
+}
 
 function nodeCommand(file, arg) {
   return arg ? `node ${file} ${arg}` : `node ${file}`;
@@ -285,14 +318,25 @@ function writeClaudeMod(home) {
   return pluginDir;
 }
 
-function install({ home, token, server, piOnPath, spawn }) {
+function install({ home, token, server, piOnPath, spawn, grokBot, client, env }) {
   if (!home) throw new Error('home is required');
   const linkDir = path.join(home, '.agent-link');
+  const runtimeEnv = env || process.env;
+  const enableGrokBot = detectGrokBot({ grokBot, client, env: runtimeEnv });
   fs.mkdirSync(linkDir, { recursive: true });
   for (const name of COPIED_FILES) {
     fs.copyFileSync(path.join(__dirname, name), path.join(linkDir, name));
   }
-  writeJson(path.join(linkDir, 'config.json'), { server, token });
+  const config = { server, token };
+  let grokBotSessionId = null;
+  if (enableGrokBot) {
+    config.grokBot = true;
+    grokBotSessionId =
+      resolveGrokBotSessionId(runtimeEnv) || crypto.randomBytes(16).toString('hex');
+    writeJson(path.join(linkDir, 'grok-bot-session.json'), { sessionId: grokBotSessionId });
+    fs.mkdirSync(path.join(linkDir, 'inbox'), { recursive: true });
+  }
+  writeJson(path.join(linkDir, 'config.json'), config);
   startWatchProcess({ linkDir, spawn });
 
   const stopCursor = nodeCommand(path.join(linkDir, 'stop.js'), 'cursor');
@@ -335,7 +379,18 @@ function install({ home, token, server, piOnPath, spawn }) {
     writeText(path.join(home, '.pi', 'agent', 'extensions', 'agent-link.js'), renderPiExtension(linkDir));
   }
 
-  return { ok: true };
+  const result = { ok: true };
+  if (enableGrokBot) {
+    result.grokBot = true;
+    result.sessionId = grokBotSessionId;
+  }
+  return result;
 }
 
-module.exports = { install, writeClaudeMod, claudePluginDir };
+module.exports = {
+  install,
+  writeClaudeMod,
+  claudePluginDir,
+  detectGrokBot,
+  resolveGrokBotSessionId,
+};

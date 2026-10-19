@@ -137,6 +137,49 @@ function getBinding(channelId, dir = agentHome()) {
   return { state: 'none' };
 }
 
+function isGrokBotHome(dir = agentHome()) {
+  if (process.env.AGENT_LINK_CLIENT === 'grok-bot') return true;
+  const config = readJson(path.join(dir, 'config.json'), {});
+  return Boolean(config && config.grokBot === true);
+}
+
+function grokBotSessionId(dir = agentHome()) {
+  if (typeof process.env.CURSOR_CONVERSATION_ID === 'string' && process.env.CURSOR_CONVERSATION_ID.length > 0) {
+    return process.env.CURSOR_CONVERSATION_ID;
+  }
+  if (typeof process.env.AGENT_LINK_SESSION_ID === 'string' && process.env.AGENT_LINK_SESSION_ID.length > 0) {
+    return process.env.AGENT_LINK_SESSION_ID;
+  }
+  const stored = readJson(path.join(dir, 'grok-bot-session.json'), {});
+  if (stored && typeof stored.sessionId === 'string' && stored.sessionId.length > 0) {
+    return stored.sessionId;
+  }
+  return 'default';
+}
+
+function writeBindings(dir, bindings) {
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'bindings.json'), `${JSON.stringify(bindings, null, 2)}\n`);
+}
+
+function commitGrokBotBind(dir, channelId) {
+  const sessionId = grokBotSessionId(dir);
+  const key = `grok-bot:${sessionId}`;
+  const bindings = readJson(path.join(dir, 'bindings.json'), {});
+  const next = bindings && typeof bindings === 'object' ? { ...bindings } : {};
+  for (const existingKey of Object.keys(next)) {
+    const value = next[existingKey];
+    if (!value || typeof value !== 'object') continue;
+    if (existingKey === key) continue;
+    const companyId = value.companyId || DEFAULT_COMPANY_ID;
+    if (value.channelId === channelId && companyId === DEFAULT_COMPANY_ID) delete next[existingKey];
+  }
+  next[key] = { companyId: DEFAULT_COMPANY_ID, channelId };
+  writeBindings(dir, next);
+  fs.rmSync(path.join(dir, 'pending-bind.json'), { force: true });
+  return { state: 'bound', client: 'grok-bot', sessionId, channelId };
+}
+
 function writePending(dir, channelId) {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, 'pending-bind.json'), `${JSON.stringify({ channelId })}\n`);
@@ -150,6 +193,9 @@ function prepareBind(channelId, replace, dir = agentHome()) {
       client: existing.client,
       sessionId: existing.sessionId,
     };
+  }
+  if (isGrokBotHome(dir)) {
+    return commitGrokBotBind(dir, channelId);
   }
   writePending(dir, channelId);
   return { state: 'pending', channelId };
@@ -213,6 +259,10 @@ async function callTool(name, args = {}, options = {}) {
       body: { id: args.id, name: args.name, description: args.description },
     });
     if (result.status === 201 && getBinding(args.id, home).state === 'none') {
+      if (isGrokBotHome(home)) {
+        const bound = commitGrokBotBind(home, args.id);
+        return { ...result, pendingBind: false, ...bound };
+      }
       writePending(home, args.id);
       return { ...result, pendingBind: true };
     }
@@ -224,6 +274,9 @@ async function callTool(name, args = {}, options = {}) {
     const binding = getBinding(args.channelId, home);
     if (binding.state === 'bound') {
       return { ...result, state: 'bound_to_other_session', client: binding.client, sessionId: binding.sessionId };
+    }
+    if (isGrokBotHome(home)) {
+      return { ...result, ...commitGrokBotBind(home, args.channelId) };
     }
     writePending(home, args.channelId);
     return { ...result, state: 'pending', channelId: args.channelId };
@@ -336,4 +389,7 @@ module.exports = {
   getBinding,
   prepareBind,
   agentHome,
+  isGrokBotHome,
+  grokBotSessionId,
+  commitGrokBotBind,
 };

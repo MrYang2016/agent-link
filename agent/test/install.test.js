@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { test } = require('node:test');
-const { install } = require('../install');
+const { install, detectGrokBot } = require('../install');
 
 function homeDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'agent-link-home-'));
@@ -80,7 +80,7 @@ test('install with piOnPath true writes .pi/agent/mcp.json', () => {
   }
 });
 
-for (const name of ['stop.js', 'mcp.js', 'pi-deliver.js', 'watch.js', 'claude-mod.js']) {
+for (const name of ['stop.js', 'mcp.js', 'pi-deliver.js', 'watch.js', 'claude-mod.js', 'grok-bot-deliver.js']) {
   test(`install copies ${name}`, () => {
     const home = homeDir();
     try {
@@ -411,3 +411,90 @@ for (const [file, client] of [
     }
   });
 }
+
+test('detectGrokBot honors explicit flag, client, env, and CURSOR_AGENT', () => {
+  assert.equal(detectGrokBot({ grokBot: true, env: {} }), true);
+  assert.equal(detectGrokBot({ client: 'grok-bot', env: {} }), true);
+  assert.equal(detectGrokBot({ env: { AGENT_LINK_CLIENT: 'grok-bot' } }), true);
+  assert.equal(detectGrokBot({ env: { CURSOR_AGENT: '1' } }), true);
+  assert.equal(detectGrokBot({ env: { CURSOR_AGENT: '1', NODE_TEST_CONTEXT: '1' } }), false);
+  assert.equal(
+    detectGrokBot({ env: { CURSOR_AGENT: '1', NODE_TEST_CONTEXT: '1', AGENT_LINK_ALLOW_CURSOR_AGENT: '1' } }),
+    true,
+  );
+  assert.equal(detectGrokBot({ env: {} }), false);
+});
+
+test('install with grokBot writes config marker, session file, and inbox dir', () => {
+  const home = homeDir();
+  try {
+    const result = install({
+      home,
+      token: 'secret-token',
+      server: 'http://127.0.0.1:3000',
+      piOnPath: false,
+      grokBot: true,
+      env: { CURSOR_CONVERSATION_ID: 'bc-grok-1' },
+      spawn() {
+        return { pid: process.pid, unref() {} };
+      },
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.grokBot, true);
+    assert.equal(result.sessionId, 'bc-grok-1');
+    assert.deepEqual(readJson(path.join(home, '.agent-link', 'config.json')), {
+      server: 'http://127.0.0.1:3000',
+      token: 'secret-token',
+      grokBot: true,
+    });
+    assert.deepEqual(readJson(path.join(home, '.agent-link', 'grok-bot-session.json')), {
+      sessionId: 'bc-grok-1',
+    });
+    assert.equal(fs.existsSync(path.join(home, '.agent-link', 'inbox')), true);
+    assert.equal(fs.existsSync(path.join(home, '.agent-link', 'grok-bot-deliver.js')), true);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('install with client grok-bot starts watch the same way as other clients', () => {
+  const home = homeDir();
+  const calls = [];
+  try {
+    install({
+      home,
+      token: 'secret-token',
+      server: 'http://127.0.0.1:3000',
+      piOnPath: false,
+      client: 'grok-bot',
+      env: {},
+      spawn: recordingSpawn(calls),
+    });
+    assert.deepEqual(calls, [{ command: process.execPath, args: [path.join(home, '.agent-link', 'watch.js')] }]);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('install without grok signals does not mark config.grokBot', () => {
+  const home = homeDir();
+  try {
+    install({
+      home,
+      token: 'secret-token',
+      server: 'http://127.0.0.1:3000',
+      piOnPath: false,
+      env: {},
+      spawn() {
+        return { unref() {} };
+      },
+    });
+    assert.deepEqual(readJson(path.join(home, '.agent-link', 'config.json')), {
+      server: 'http://127.0.0.1:3000',
+      token: 'secret-token',
+    });
+    assert.equal(fs.existsSync(path.join(home, '.agent-link', 'grok-bot-session.json')), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});

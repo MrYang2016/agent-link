@@ -9,6 +9,7 @@ const path = require('path');
 const { test } = require('node:test');
 const { messageText } = require('../followup');
 const { deliverChannel, markBusy, runWatch } = require('../watch');
+const { peekInbox, inboxPath } = require('../grok-bot-deliver');
 
 const messages = [
   {
@@ -242,6 +243,96 @@ test('deliverChannel pulls once and delivers messageText once to a registered Cl
   assert.equal(seen.pulls.length, 1);
   assert.deepEqual(writes, [`${JSON.stringify({ op: 'deliver', messageText: messageText(messages) })}\n`]);
   assert.equal(result.submitted, true);
+});
+
+test('deliverChannel writes messageText once to the Grok Bot inbox', async () => {
+  const dir = directory();
+  const seen = recorder();
+  try {
+    const result = await deliverChannel({
+      channelId: 'ch-1',
+      bindings: binding('grok-bot', 'bc-1'),
+      sessionState: {},
+      dir,
+      config: { server: 'http://watch.example', token: 'secret-token' },
+      request: seen.request,
+      spawn: seen.spawn,
+    });
+    assert.equal(result.pulled, true);
+    assert.equal(result.submitted, true);
+    assert.equal(seen.pulls.length, 1);
+    assert.deepEqual(seen.spawns, []);
+    const entries = peekInbox(dir);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].messageText, messageText(messages));
+    assert.equal(entries[0].channelId, 'ch-1');
+    assert.equal(fs.existsSync(inboxPath(dir)), true);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('deliverChannel still writes the Grok Bot inbox when the session is busy', async () => {
+  const dir = directory();
+  const seen = recorder();
+  try {
+    const result = await deliverChannel({
+      channelId: 'ch-1',
+      bindings: binding('grok-bot', 'bc-1'),
+      sessionState: { 'grok-bot:bc-1': 'busy' },
+      dir,
+      config: { server: 'http://watch.example', token: 'secret-token' },
+      request: seen.request,
+      spawn: seen.spawn,
+    });
+    assert.equal(result.pulled, true);
+    assert.equal(result.submitted, true);
+    assert.equal(peekInbox(dir).length, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('runWatch pulls once and writes the Grok Bot inbox from SSE', async () => {
+  const dir = directory();
+  const pulls = [];
+  const server = await listen((req, res) => {
+    assert.equal(req.url, '/api/events');
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' });
+    res.end(`data: ${JSON.stringify({ channelId: 'ch-1' })}\n\n`);
+  });
+  try {
+    fs.writeFileSync(
+      path.join(dir, 'config.json'),
+      `${JSON.stringify({ server: server.origin, token: 'secret-token', grokBot: true })}\n`,
+    );
+    fs.writeFileSync(path.join(dir, 'bindings.json'), `${JSON.stringify(binding('grok-bot', 'bc-9'))}\n`);
+    fs.writeFileSync(path.join(dir, 'session-state.json'), '{}\n');
+    await runWatch({
+      dir,
+      once: true,
+      async request(url, init) {
+        pulls.push({
+          url: String(url),
+          authorization: init.headers.Authorization,
+        });
+        return { messages };
+      },
+      spawn() {
+        return { unref() {} };
+      },
+    });
+    assert.deepEqual(pulls, [
+      {
+        url: `${server.origin}/api/channels/ch-1/pull`,
+        authorization: 'Bearer secret-token',
+      },
+    ]);
+    assert.equal(peekInbox(dir)[0].messageText, messageText(messages));
+  } finally {
+    await server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('a later pull that returns no messages does not submit again', async () => {

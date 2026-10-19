@@ -194,6 +194,80 @@ test('prepare_bind writes pending-bind.json when the channel is unbound', () => 
   }
 });
 
+test('prepare_bind on Grok Bot writes bindings immediately without pending', () => {
+  const dir = directory();
+  const previousConversation = process.env.CURSOR_CONVERSATION_ID;
+  const previousSession = process.env.AGENT_LINK_SESSION_ID;
+  delete process.env.CURSOR_CONVERSATION_ID;
+  delete process.env.AGENT_LINK_SESSION_ID;
+  try {
+    writeJson(path.join(dir, 'config.json'), {
+      server: 'http://127.0.0.1:3000',
+      token: 'secret-token',
+      grokBot: true,
+    });
+    writeJson(path.join(dir, 'grok-bot-session.json'), { sessionId: 'bc-bind-1' });
+    const result = prepareBind('ch-9', false, dir);
+    assert.deepEqual(result, {
+      state: 'bound',
+      client: 'grok-bot',
+      sessionId: 'bc-bind-1',
+      channelId: 'ch-9',
+    });
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'bindings.json'), 'utf8')), {
+      'grok-bot:bc-bind-1': { companyId: 'default', channelId: 'ch-9' },
+    });
+    assert.equal(fs.existsSync(path.join(dir, 'pending-bind.json')), false);
+  } finally {
+    if (previousConversation === undefined) delete process.env.CURSOR_CONVERSATION_ID;
+    else process.env.CURSOR_CONVERSATION_ID = previousConversation;
+    if (previousSession === undefined) delete process.env.AGENT_LINK_SESSION_ID;
+    else process.env.AGENT_LINK_SESSION_ID = previousSession;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('create_channel on Grok Bot binds immediately', async () => {
+  const dir = directory();
+  const previousConversation = process.env.CURSOR_CONVERSATION_ID;
+  const previousSession = process.env.AGENT_LINK_SESSION_ID;
+  delete process.env.CURSOR_CONVERSATION_ID;
+  delete process.env.AGENT_LINK_SESSION_ID;
+  const server = await listen(async (req, res) => {
+    await readBody(req);
+    res.statusCode = 201;
+    res.end(JSON.stringify({ id: 'ch-new', name: 'n', description: 'd' }));
+  });
+  try {
+    writeJson(path.join(dir, 'config.json'), {
+      server: server.origin,
+      token: 'secret-token',
+      grokBot: true,
+    });
+    writeJson(path.join(dir, 'grok-bot-session.json'), { sessionId: 'bc-create-1' });
+    const result = await new McpServer().callTool(
+      'create_channel',
+      { id: 'ch-new', name: 'n', description: 'd' },
+      { home: dir },
+    );
+    assert.equal(result.status, 201);
+    assert.equal(result.pendingBind, false);
+    assert.equal(result.state, 'bound');
+    assert.equal(result.client, 'grok-bot');
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'bindings.json'), 'utf8')), {
+      'grok-bot:bc-create-1': { companyId: 'default', channelId: 'ch-new' },
+    });
+    assert.equal(fs.existsSync(path.join(dir, 'pending-bind.json')), false);
+  } finally {
+    if (previousConversation === undefined) delete process.env.CURSOR_CONVERSATION_ID;
+    else process.env.CURSOR_CONVERSATION_ID = previousConversation;
+    if (previousSession === undefined) delete process.env.AGENT_LINK_SESSION_ID;
+    else process.env.AGENT_LINK_SESSION_ID = previousSession;
+    await server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('create_channel writes pending-bind.json only when the channel is unbound', async () => {
   const dir = directory();
   const requests = [];
