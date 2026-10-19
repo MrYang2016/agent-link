@@ -916,6 +916,19 @@ describe('install and pages', () => {
     expect(res.text).toContain('runStop');
   });
 
+  it('serves claude-register.js from GET /install/files/claude-register.js', async () => {
+    const res = await request(server).get('/install/files/claude-register.js');
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('export function register');
+    expect(res.text).toContain('$.prompt.submit');
+  });
+
+  it('install shell downloads claude-register.js', async () => {
+    const res = await request(server).get('/install');
+    expect(res.status).toBe(200);
+    expect(res.text).toContain('claude-register.js');
+  });
+
   it('returns 404 for an unknown install file', async () => {
     const res = await request(server).get('/install/files/nope.js');
     expect(res.status).toBe(404);

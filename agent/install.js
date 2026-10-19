@@ -78,12 +78,20 @@ function upsertNestedStop(doc, eventName, command, scriptClient, scriptName = 's
   return doc;
 }
 
-function upsertPluginDir(doc, pluginDir) {
-  doc.env = doc.env && typeof doc.env === 'object' ? doc.env : {};
+function removePluginDirEnv(doc, pluginDirs) {
+  if (!doc.env || typeof doc.env !== 'object') return doc;
   const current = typeof doc.env.CLAUDE_CODE_PLUGIN_DIRS === 'string' ? doc.env.CLAUDE_CODE_PLUGIN_DIRS : '';
-  const parts = current.split(':').filter((part) => part.length > 0);
-  if (!parts.includes(pluginDir)) parts.push(pluginDir);
-  doc.env.CLAUDE_CODE_PLUGIN_DIRS = parts.join(':');
+  if (!current) return doc;
+  const drop = new Set(pluginDirs);
+  const parts = current.split(':').filter((part) => part.length > 0 && !drop.has(part));
+  if (parts.length === 0) delete doc.env.CLAUDE_CODE_PLUGIN_DIRS;
+  else doc.env.CLAUDE_CODE_PLUGIN_DIRS = parts.join(':');
+  return doc;
+}
+
+function upsertEnabledPlugin(doc, pluginId) {
+  doc.enabledPlugins = doc.enabledPlugins && typeof doc.enabledPlugins === 'object' ? doc.enabledPlugins : {};
+  doc.enabledPlugins[pluginId] = true;
   return doc;
 }
 
@@ -251,22 +259,29 @@ module.exports = function agentLinkExtension(pi) {
 `;
 }
 
-function writeClaudeMod(home, linkDir) {
-  const pluginDir = path.join(home, '.claude', 'plugins', 'agent-link');
+function claudePluginDir(home) {
+  return path.join(home, '.claude', 'skills', 'agent-link');
+}
+
+function writeClaudeMod(home) {
+  const pluginDir = claudePluginDir(home);
+  const legacyPluginDir = path.join(home, '.claude', 'plugins', 'agent-link');
+  if (fs.existsSync(legacyPluginDir)) {
+    fs.rmSync(legacyPluginDir, { recursive: true, force: true });
+  }
   writeJson(path.join(pluginDir, '.claude-plugin', 'plugin.json'), {
     name: 'agent-link',
-    version: '0.0.1',
-    description: '把频道队列里的消息交给这场 Claude Code 会话',
+    version: '0.0.2',
+    description: 'Deliver agent-link channel messages into this Claude Code session (mods API)',
+    defaultEnabled: true,
   });
-  writeJson(path.join(pluginDir, 'hooks', 'hooks.json'), { modules: ['./register.js'] });
-  const source = [
-    "import { createRequire } from 'node:module';",
-    'const require = createRequire(import.meta.url);',
-    `const loaded = require(${JSON.stringify(path.join(linkDir, 'claude-mod.js'))});`,
-    'export const register = loaded.register;',
-    '',
-  ].join('\n');
-  writeText(path.join(pluginDir, 'hooks', 'register.js'), source);
+  // hooks must be a record for Claude Code 2.1.x validate; modules makes this a mod.
+  writeJson(path.join(pluginDir, 'hooks', 'hooks.json'), {
+    description: 'agent-link Claude Code mod: session.start → watch.sock peer → $.prompt.submit',
+    modules: ['./register.js'],
+    hooks: {},
+  });
+  writeText(path.join(pluginDir, 'hooks', 'register.js'), readText(path.join(__dirname, 'claude-register.js')));
   return pluginDir;
 }
 
@@ -301,7 +316,13 @@ function install({ home, token, server, piOnPath, spawn }) {
   const claudeSettings = readJson(path.join(home, '.claude', 'settings.json'));
   upsertNestedStop(claudeSettings, 'Stop', stopClaude, 'claude-code');
   upsertNestedStop(claudeSettings, 'UserPromptSubmit', busyClaude, 'claude-code', 'watch.js');
-  upsertPluginDir(claudeSettings, writeClaudeMod(home, linkDir));
+  const pluginDir = writeClaudeMod(home);
+  // Prefer skills-dir load (every session) over CLAUDE_CODE_PLUGIN_DIRS alone.
+  removePluginDirEnv(claudeSettings, [
+    pluginDir,
+    path.join(home, '.claude', 'plugins', 'agent-link'),
+  ]);
+  upsertEnabledPlugin(claudeSettings, 'agent-link@skills-dir');
   writeJson(path.join(home, '.claude', 'settings.json'), claudeSettings);
   writeText(path.join(home, '.codex', 'config.toml'), upsertCodexToml(readText(path.join(home, '.codex', 'config.toml')), mcpFile));
   const codexHooks = readJson(path.join(home, '.codex', 'hooks.json'));
@@ -317,4 +338,4 @@ function install({ home, token, server, piOnPath, spawn }) {
   return { ok: true };
 }
 
-module.exports = { install };
+module.exports = { install, writeClaudeMod, claudePluginDir };

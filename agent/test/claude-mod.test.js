@@ -1,12 +1,13 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const { spawn } = require('child_process');
 const fs = require('fs');
 const net = require('net');
 const os = require('os');
 const path = require('path');
 const { test } = require('node:test');
-const { connectClaude } = require('../claude-mod');
+const { connectClaude, runPeerCli } = require('../claude-mod');
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -76,6 +77,143 @@ test('claude mod submits the delivered messageText once', async () => {
   } finally {
     connection.close();
     await bridge.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('claude-mod peer CLI writes deliver lines to stdout', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-link-claude-peer-'));
+  const sock = path.join(dir, 'watch.sock');
+  const bridge = await listenSocket(sock);
+  const lines = [];
+  const stderr = [];
+  const previous = process.env.AGENT_LINK_SOCKET;
+  process.env.AGENT_LINK_SOCKET = sock;
+  let connection = null;
+  try {
+    const result = runPeerCli(['sess-cli'], {
+      stdout: {
+        write(chunk) {
+          lines.push(String(chunk));
+        },
+      },
+      stderr: {
+        write(chunk) {
+          stderr.push(String(chunk));
+        },
+      },
+    });
+    connection = result.connection;
+    assert.equal(result.code, 0);
+    const started = Date.now();
+    while (lines.length < 1) {
+      if (Date.now() - started > 3000) {
+        throw new Error(`peer CLI wrote nothing; stderr=${stderr.join('')} registrations=${JSON.stringify(bridge.registrations)}`);
+      }
+      await delay(20);
+    }
+    assert.deepEqual(bridge.registrations, [{ op: 'register', client: 'claude-code', sessionId: 'sess-cli' }]);
+    assert.deepEqual(
+      lines.map((line) => JSON.parse(line.trim())),
+      [{ op: 'deliver', messageText: 'claude-socket-text' }],
+    );
+  } finally {
+    if (connection) connection.close();
+    if (previous === undefined) delete process.env.AGENT_LINK_SOCKET;
+    else process.env.AGENT_LINK_SOCKET = previous;
+    await bridge.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('keepAlive false unrefs reconnect timer while waiting for the socket', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-link-claude-unref-'));
+  const sock = path.join(dir, 'missing.sock');
+  let unrefCalls = 0;
+  const original = setTimeout;
+  global.setTimeout = (fn, ms, ...args) => {
+    const timer = original(fn, ms, ...args);
+    const wrapped = {
+      unref() {
+        unrefCalls += 1;
+        if (typeof timer.unref === 'function') return timer.unref();
+        return timer;
+      },
+      ref() {
+        if (typeof timer.ref === 'function') return timer.ref();
+        return timer;
+      },
+    };
+    return wrapped;
+  };
+  let connection = null;
+  try {
+    connection = connectClaude({
+      prompt: { submit() {} },
+      sessionId: 'sess-unref',
+      socketPath: sock,
+      keepAlive: false,
+    });
+    await delay(20);
+    assert.ok(unrefCalls >= 1);
+  } finally {
+    global.setTimeout = original;
+    if (connection) connection.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('keepAlive true does not unref reconnect timer while waiting for the socket', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-link-claude-keepalive-'));
+  const sock = path.join(dir, 'missing.sock');
+  let unrefCalls = 0;
+  const original = setTimeout;
+  global.setTimeout = (fn, ms, ...args) => {
+    const timer = original(fn, ms, ...args);
+    const wrapped = {
+      unref() {
+        unrefCalls += 1;
+        if (typeof timer.unref === 'function') return timer.unref();
+        return timer;
+      },
+      ref() {
+        if (typeof timer.ref === 'function') return timer.ref();
+        return timer;
+      },
+    };
+    return wrapped;
+  };
+  let connection = null;
+  try {
+    connection = connectClaude({
+      prompt: { submit() {} },
+      sessionId: 'sess-keep',
+      socketPath: sock,
+      keepAlive: true,
+    });
+    await delay(20);
+    assert.equal(unrefCalls, 0);
+  } finally {
+    global.setTimeout = original;
+    if (connection) connection.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('peer CLI process stays alive while waiting for watch.sock (keepAlive)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-link-claude-alive-'));
+  const sock = path.join(dir, 'missing.sock');
+  const child = spawn(process.execPath, [path.join(__dirname, '..', 'claude-mod.js'), 'sess-alive'], {
+    env: { ...process.env, AGENT_LINK_SOCKET: sock },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  try {
+    await delay(1500);
+    assert.equal(child.exitCode, null);
+    assert.equal(child.killed, false);
+  } finally {
+    child.kill('SIGTERM');
+    await new Promise((resolve) => child.once('exit', resolve));
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -12,13 +12,14 @@ function socketPath(explicit) {
   return path.join(dir, 'watch.sock');
 }
 
-function connectClaude({ prompt, sessionId, socketPath: explicit }) {
+function connectClaude({ prompt, sessionId, socketPath: explicit, keepAlive }) {
   if (!sessionId || !prompt || typeof prompt.submit !== 'function') return null;
   const target = socketPath(explicit);
   let socket = null;
   let buffer = '';
   let retry = null;
   let closed = false;
+  const refHandles = keepAlive === true;
 
   const schedule = () => {
     if (closed || retry) return;
@@ -26,7 +27,7 @@ function connectClaude({ prompt, sessionId, socketPath: explicit }) {
       retry = null;
       open();
     }, 1000);
-    if (typeof retry.unref === 'function') retry.unref();
+    if (!refHandles && typeof retry.unref === 'function') retry.unref();
   };
 
   const open = () => {
@@ -36,7 +37,7 @@ function connectClaude({ prompt, sessionId, socketPath: explicit }) {
       return;
     }
     socket = net.connect(target);
-    if (typeof socket.unref === 'function') socket.unref();
+    if (!refHandles && typeof socket.unref === 'function') socket.unref();
     socket.setEncoding('utf8');
     socket.on('connect', () => {
       socket.write(`${JSON.stringify({ op: 'register', client: 'claude-code', sessionId })}\n`);
@@ -76,19 +77,29 @@ function connectClaude({ prompt, sessionId, socketPath: explicit }) {
   };
 }
 
-function register(on) {
-  on('session.start', async ($, event, next) => {
-    let sessionId = '';
-    try {
-      const id = await $.session.id();
-      if (id) sessionId = String(id);
-    } catch {
-      sessionId = '';
-    }
-    if (sessionId) connectClaude({ prompt: $.prompt, sessionId });
-    if (typeof next === 'function') return next(event);
-    return undefined;
+function runPeerCli(argv = process.argv.slice(2), io = process) {
+  const sessionId = argv[0];
+  if (!sessionId) {
+    io.stderr.write('usage: node claude-mod.js <sessionId>\n');
+    return { code: 1, connection: null };
+  }
+  const connection = connectClaude({
+    prompt: {
+      submit(payload) {
+        const text = payload && typeof payload.text === 'string' ? payload.text : '';
+        if (!text) return;
+        io.stdout.write(`${JSON.stringify({ op: 'deliver', messageText: text })}\n`);
+      },
+    },
+    sessionId,
+    keepAlive: true,
   });
+  return { code: 0, connection };
 }
 
-module.exports = { register, connectClaude, socketPath };
+if (require.main === module) {
+  const { code } = runPeerCli();
+  if (code !== 0) process.exit(code);
+}
+
+module.exports = { connectClaude, socketPath, runPeerCli };
