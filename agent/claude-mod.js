@@ -12,13 +12,14 @@ function socketPath(explicit) {
   return path.join(dir, 'watch.sock');
 }
 
-function connectClaude({ prompt, sessionId, socketPath: explicit }) {
+function connectClaude({ prompt, sessionId, socketPath: explicit, keepAlive }) {
   if (!sessionId || !prompt || typeof prompt.submit !== 'function') return null;
   const target = socketPath(explicit);
   let socket = null;
   let buffer = '';
   let retry = null;
   let closed = false;
+  const refHandles = keepAlive === true;
 
   const schedule = () => {
     if (closed || retry) return;
@@ -26,7 +27,7 @@ function connectClaude({ prompt, sessionId, socketPath: explicit }) {
       retry = null;
       open();
     }, 1000);
-    if (typeof retry.unref === 'function') retry.unref();
+    if (!refHandles && typeof retry.unref === 'function') retry.unref();
   };
 
   const open = () => {
@@ -36,7 +37,7 @@ function connectClaude({ prompt, sessionId, socketPath: explicit }) {
       return;
     }
     socket = net.connect(target);
-    if (typeof socket.unref === 'function') socket.unref();
+    if (!refHandles && typeof socket.unref === 'function') socket.unref();
     socket.setEncoding('utf8');
     socket.on('connect', () => {
       socket.write(`${JSON.stringify({ op: 'register', client: 'claude-code', sessionId })}\n`);
@@ -91,6 +92,7 @@ function runPeerCli(argv = process.argv.slice(2), io = process) {
       },
     },
     sessionId,
+    keepAlive: true,
   });
   return { code: 0, connection };
 }

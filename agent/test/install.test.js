@@ -119,10 +119,14 @@ test('install writes a Claude Code skills-dir mod with ESM register', () => {
     assert.equal(Array.isArray(hooksJson.hooks), false);
     assert.match(register, /export function register\s*\(/);
     assert.match(register, /\$\.prompt\.submit/);
-    assert.match(register, /\$\.process\.spawn/);
+    assert.match(register, /\$\.process\.spawn\(\s*\{/);
+    assert.match(register, /argv:\s*\[\s*['"]\/usr\/local\/bin\/node['"]/);
+    assert.match(register, /await\s+\$\.env\.get\(\s*['"]HOME['"]\s*\)/);
+    assert.match(register, /await\s+\$\.env\.get\(\s*['"]AGENT_LINK_HOME['"]\s*\)/);
     assert.match(register, /session\.start/);
     assert.equal(register.includes('createRequire'), false);
-    assert.equal(register.includes("require("), false);
+    assert.equal(register.includes('require('), false);
+    assert.equal(register.includes("spawn(['node'"), false);
     assert.equal(settings.enabledPlugins['agent-link@skills-dir'], true);
     assert.equal(fs.existsSync(path.join(home, '.claude', 'plugins', 'agent-link')), false);
   } finally {

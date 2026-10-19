@@ -151,7 +151,7 @@ npm test
 Claude Code **≥ 2.1.287**（mods API；本仓库按 **2.1.303** 对齐）。2.1.x 的 hooks 模块是 **ESM sandbox**（无 `require` / 无 Node `net`），因此：
 
 1. **Install** 把合法 mod 写到 `~/.claude/skills/agent-link`（`@skills-dir`，每场会话自动加载），并在 `~/.claude/settings.json` 设 `enabledPlugins["agent-link@skills-dir"]=true`。同时保留 **Stop** / **UserPromptSubmit** 命令 hook（Stop 仍可 `decision: block` 注入正文）。
-2. **即时 push**：新开一场 Claude 会话 → mod 的 `session.start` → `$.process.spawn(['node', '~/.agent-link/claude-mod.js', sessionId])` → peer 在 `~/.agent-link/watch.sock` 上 `register` 为 `claude-code` → watch SSE pull 后 `deliver` → peer 写 stdout → mod 调 `$.prompt.submit({ text })`（空闲时开新一轮；忙时会等 idle）。
+2. **即时 push**：新开一场 Claude 会话 → mod 的 `session.start` → `$.process.spawn({ argv: ['/usr/local/bin/node', '~/.agent-link/claude-mod.js', sessionId] })`（不要 await 到退出）→ peer 以 **`keepAlive: true`** 连 `watch.sock` 并 `register` 为 `claude-code` → watch SSE pull 后 `deliver` → peer 写 stdout → mod 读 `child.stdout` 行并 `$.prompt.submit({ text })`（空闲时开新一轮；忙时会等 idle）。`$.env.get('HOME'|'AGENT_LINK_HOME')` 必须 **await** 且参数为字面量。
 3. **Stop 回退**：若 mod 未加载、peer 未连上、或 push 未到，Stop hook 仍会 pull 并用 block reason 注入。
 
 **在 Mac 上重装 / 验证：**
