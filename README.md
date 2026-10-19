@@ -91,12 +91,12 @@ curl -fsSL <SERVER>/install | sh -s -- --token <TOKEN> --server <SERVER>
 
 上面的 `curl … /install` 会：
 
-1. 从 `$SERVER/install/files/` 下载 `stop.js`、`mcp.js`、`pi-deliver.js`、`followup.js`、`install.js`、`watch.js`、`claude-mod.js`
+1. 从 `$SERVER/install/files/` 下载 `stop.js`、`mcp.js`、`pi-deliver.js`、`followup.js`、`install.js`、`watch.js`、`claude-mod.js`、`claude-register.js`
 2. 调用 `install.js` 的 `install({ home, token, server, piOnPath })`，写入 `~/.agent-link/config.json`（内容为 `{ server, token }`），并把脚本复制到 `~/.agent-link/`
 3. 启动后台 `watch.js`（pid 记在 `~/.agent-link/watch.pid`）
 4. 配置各客户端：
    - **Cursor**：`~/.cursor/mcp.json`（MCP）、`~/.cursor/hooks.json`（`stop` → `stop.js cursor`；`beforeSubmitPrompt` → `watch.js mark-busy cursor`）
-   - **Claude Code**：`~/.claude.json`（MCP）、`~/.claude/settings.json`（Stop / UserPromptSubmit hook + plugin 目录）
+   - **Claude Code**（需 **≥ 2.1.287**，已在 **2.1.303** 验证）：`~/.claude.json`（MCP）、`~/.claude/settings.json`（Stop / UserPromptSubmit 命令 hook + `enabledPlugins["agent-link@skills-dir"]`）、`~/.claude/skills/agent-link`（合法 mods 插件：ESM `hooks/register.js`）
    - **Codex**：`~/.codex/config.toml`（MCP）、`~/.codex/hooks.json`（Stop / UserPromptSubmit）
    - **Pi**（仅当检测到 `pi` 或 `~/.pi/agent` 等）：`~/.pi/agent/mcp.json` 与 extension
 
@@ -113,7 +113,8 @@ curl -fsSL <SERVER>/install | sh -s -- --token <TOKEN> --server <SERVER>
 | `watch.js` | 后台进程：听 `/api/events`，pull 后投递；也支持 `mark-busy` |
 | `mcp.js` | stdio MCP，暴露频道相关 tools |
 | `followup.js` | 把 pull 到的消息格式化成 stop hook 输出 |
-| `claude-mod.js` | Claude Code 插件侧：连 `watch.sock` 收投递 |
+| `claude-mod.js` | Claude Code **peer 进程**（Node）：连 `watch.sock`，把 `deliver` 打到 stdout |
+| `claude-register.js` | Claude Code **mod** 源码（ESM）：`session.start` → `$.process.spawn(claude-mod.js)` → `$.prompt.submit` |
 | `pi-deliver.js` | Pi 侧投递辅助（有正文才 `sendUserMessage`） |
 
 ## 两人如何互发消息（典型路径）
@@ -145,10 +146,38 @@ npm test
 
 跑 server 测试同样需要可连的 MySQL（测试代码使用与上面相同的 `MYSQL_*` 默认值）。
 
+## Claude Code 投递（mods / push）
+
+Claude Code **≥ 2.1.287**（mods API；本仓库按 **2.1.303** 对齐）。2.1.x 的 hooks 模块是 **ESM sandbox**（无 `require` / 无 Node `net`），因此：
+
+1. **Install** 把合法 mod 写到 `~/.claude/skills/agent-link`（`@skills-dir`，每场会话自动加载），并在 `~/.claude/settings.json` 设 `enabledPlugins["agent-link@skills-dir"]=true`。同时保留 **Stop** / **UserPromptSubmit** 命令 hook（Stop 仍可 `decision: block` 注入正文）。
+2. **即时 push**：新开一场 Claude 会话 → mod 的 `session.start` → `$.process.spawn(['node', '~/.agent-link/claude-mod.js', sessionId])` → peer 在 `~/.agent-link/watch.sock` 上 `register` 为 `claude-code` → watch SSE pull 后 `deliver` → peer 写 stdout → mod 调 `$.prompt.submit({ text })`（空闲时开新一轮；忙时会等 idle）。
+3. **Stop 回退**：若 mod 未加载、peer 未连上、或 push 未到，Stop hook 仍会 pull 并用 block reason 注入。
+
+**在 Mac 上重装 / 验证：**
+
+```bash
+# 1) 升级 Claude Code 到 ≥ 2.1.287，确认版本
+claude --version
+
+# 2) 重新跑账号页的 install（或仓库内 install.js）
+curl -fsSL <SERVER>/install | sh -s -- --token <TOKEN> --server <SERVER>
+
+# 3) 校验 mod 形态（应通过；hooks 行含 session.start）
+claude plugin validate ~/.claude/skills/agent-link
+
+# 4) 新开 Claude 会话（不要沿用旧会话），确认插件在 /plugin → Installed 里为 agent-link
+# 5) 绑定频道后，从另一端发消息；本机应出现 watch.sock 上的 claude-code peer，并 prompt.submit
+#    若 push 不到，跑完一轮等 Stop hook 注入即可
+```
+
+不要只靠 `CLAUDE_CODE_PLUGIN_DIRS`：`~/.claude/plugins/agent-link` 不是 Claude 的扫描加载路径；install 会清掉该遗留目录。
+
 ## Known limitations
 
 - **许可证尚未决定**（本仓库暂不附 LICENSE）。
 - 这是**能跑通的原型**，不是成品 SaaS：无托管部署、无组织审计等。
 - `watch.js` 向 **Cursor** 会话投递时会 `spawn`：`agent --resume=<id> -p <text>`；向 **Codex** 为 `codex exec resume <id> <text>`；向 **Claude Code / Pi** 则通过本机 `~/.agent-link/watch.sock` 投递。**不保证**已经打开的 IDE 聊天窗口一定能收到。
+- Claude Code 的 `$.prompt.submit` 会等到会话 **idle** 再开新 turn；对话进行中的消息会排队，不是“打断当前 turn”的硬推。
 - `spawn` 的错误目前被吞掉、**不会打日志**（`child.on('error', () => undefined)`）。
 - TypeORM `synchronize: true`，适合试用，不适合当作生产级 schema 管理。

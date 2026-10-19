@@ -76,19 +76,28 @@ function connectClaude({ prompt, sessionId, socketPath: explicit }) {
   };
 }
 
-function register(on) {
-  on('session.start', async ($, event, next) => {
-    let sessionId = '';
-    try {
-      const id = await $.session.id();
-      if (id) sessionId = String(id);
-    } catch {
-      sessionId = '';
-    }
-    if (sessionId) connectClaude({ prompt: $.prompt, sessionId });
-    if (typeof next === 'function') return next(event);
-    return undefined;
+function runPeerCli(argv = process.argv.slice(2), io = process) {
+  const sessionId = argv[0];
+  if (!sessionId) {
+    io.stderr.write('usage: node claude-mod.js <sessionId>\n');
+    return { code: 1, connection: null };
+  }
+  const connection = connectClaude({
+    prompt: {
+      submit(payload) {
+        const text = payload && typeof payload.text === 'string' ? payload.text : '';
+        if (!text) return;
+        io.stdout.write(`${JSON.stringify({ op: 'deliver', messageText: text })}\n`);
+      },
+    },
+    sessionId,
   });
+  return { code: 0, connection };
 }
 
-module.exports = { register, connectClaude, socketPath };
+if (require.main === module) {
+  const { code } = runPeerCli();
+  if (code !== 0) process.exit(code);
+}
+
+module.exports = { connectClaude, socketPath, runPeerCli };

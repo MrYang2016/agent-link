@@ -94,6 +94,99 @@ for (const name of ['stop.js', 'mcp.js', 'pi-deliver.js', 'watch.js', 'claude-mo
   });
 }
 
+test('install writes a Claude Code skills-dir mod with ESM register', () => {
+  const home = homeDir();
+  try {
+    install({
+      home,
+      token: 'secret-token',
+      server: 'http://127.0.0.1:3000',
+      piOnPath: false,
+      spawn() {
+        return { unref() {} };
+      },
+    });
+    const pluginDir = path.join(home, '.claude', 'skills', 'agent-link');
+    const hooksJson = readJson(path.join(pluginDir, 'hooks', 'hooks.json'));
+    const register = fs.readFileSync(path.join(pluginDir, 'hooks', 'register.js'), 'utf8');
+    const manifest = readJson(path.join(pluginDir, '.claude-plugin', 'plugin.json'));
+    const settings = readJson(path.join(home, '.claude', 'settings.json'));
+    assert.equal(manifest.name, 'agent-link');
+    assert.equal(manifest.defaultEnabled, true);
+    assert.deepEqual(hooksJson.modules, ['./register.js']);
+    assert.equal(typeof hooksJson.hooks, 'object');
+    assert.equal(hooksJson.hooks === null, false);
+    assert.equal(Array.isArray(hooksJson.hooks), false);
+    assert.match(register, /export function register\s*\(/);
+    assert.match(register, /\$\.prompt\.submit/);
+    assert.match(register, /\$\.process\.spawn/);
+    assert.match(register, /session\.start/);
+    assert.equal(register.includes('createRequire'), false);
+    assert.equal(register.includes("require("), false);
+    assert.equal(settings.enabledPlugins['agent-link@skills-dir'], true);
+    assert.equal(fs.existsSync(path.join(home, '.claude', 'plugins', 'agent-link')), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('install keeps Claude Stop and UserPromptSubmit command hooks', () => {
+  const home = homeDir();
+  try {
+    install({
+      home,
+      token: 'secret-token',
+      server: 'http://127.0.0.1:3000',
+      piOnPath: false,
+      spawn() {
+        return { unref() {} };
+      },
+    });
+    const commands = commandsIn(readJson(path.join(home, '.claude', 'settings.json')));
+    const stop = `node ${path.join(home, '.agent-link', 'stop.js')} claude-code`;
+    const busy = `node ${path.join(home, '.agent-link', 'watch.js')} mark-busy claude-code`;
+    assert.equal(commands.includes(stop), true);
+    assert.equal(commands.includes(busy), true);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('install removes legacy CLAUDE_CODE_PLUGIN_DIRS entries for agent-link', () => {
+  const home = homeDir();
+  try {
+    const settingsPath = path.join(home, '.claude', 'settings.json');
+    const legacy = path.join(home, '.claude', 'plugins', 'agent-link');
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.mkdirSync(path.join(legacy, 'hooks'), { recursive: true });
+    fs.writeFileSync(
+      settingsPath,
+      `${JSON.stringify(
+        {
+          env: { CLAUDE_CODE_PLUGIN_DIRS: `${legacy}:/other/plugins` },
+          hooks: {},
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    install({
+      home,
+      token: 'secret-token',
+      server: 'http://127.0.0.1:3000',
+      piOnPath: false,
+      spawn() {
+        return { unref() {} };
+      },
+    });
+    const settings = readJson(settingsPath);
+    assert.equal(settings.env.CLAUDE_CODE_PLUGIN_DIRS, '/other/plugins');
+    assert.equal(fs.existsSync(legacy), false);
+  } finally {
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test('install writes server and token into config.json', () => {
   const home = homeDir();
   try {

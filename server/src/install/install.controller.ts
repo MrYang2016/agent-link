@@ -10,6 +10,7 @@ const FILE_NAMES = new Set([
   'install.js',
   'watch.js',
   'claude-mod.js',
+  'claude-register.js',
 ]);
 
 function agentDirectory(): string {
@@ -57,7 +58,7 @@ const SHELL = [
   'SERVER="${SERVER%/}"',
   'TMP="$(mktemp -d)"',
   'trap \'rm -rf "$TMP"\' EXIT',
-  'for name in stop.js mcp.js pi-deliver.js followup.js install.js watch.js claude-mod.js; do',
+  'for name in stop.js mcp.js pi-deliver.js followup.js install.js watch.js claude-mod.js claude-register.js; do',
   '  curl -fsSL "$SERVER/install/files/$name" -o "$TMP/$name"',
   'done',
   'PI_ON_PATH=false',
@@ -82,6 +83,7 @@ const SHELL = [
   'echo "令牌已写入 $HOME_DIR/.agent-link/config.json，不用再单独配置。"',
   'echo "服务地址：$SERVER"',
   'echo "已配置 Cursor、Claude Code、Codex 的 MCP 和 hook。"',
+  'echo "Claude Code mod：~/.claude/skills/agent-link（需 Claude Code ≥ 2.1.287；可用 claude plugin validate 校验）。"',
   'if [ "$PI_ON_PATH" = true ]; then',
   '  echo "已配置 Pi。"',
   'else',

@@ -6,7 +6,7 @@ const net = require('net');
 const os = require('os');
 const path = require('path');
 const { test } = require('node:test');
-const { connectClaude } = require('../claude-mod');
+const { connectClaude, runPeerCli } = require('../claude-mod');
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -75,6 +75,51 @@ test('claude mod submits the delivered messageText once', async () => {
     assert.deepEqual(submits, [{ text: 'claude-socket-text' }]);
   } finally {
     connection.close();
+    await bridge.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('claude-mod peer CLI writes deliver lines to stdout', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-link-claude-peer-'));
+  const sock = path.join(dir, 'watch.sock');
+  const bridge = await listenSocket(sock);
+  const lines = [];
+  const stderr = [];
+  const previous = process.env.AGENT_LINK_SOCKET;
+  process.env.AGENT_LINK_SOCKET = sock;
+  let connection = null;
+  try {
+    const result = runPeerCli(['sess-cli'], {
+      stdout: {
+        write(chunk) {
+          lines.push(String(chunk));
+        },
+      },
+      stderr: {
+        write(chunk) {
+          stderr.push(String(chunk));
+        },
+      },
+    });
+    connection = result.connection;
+    assert.equal(result.code, 0);
+    const started = Date.now();
+    while (lines.length < 1) {
+      if (Date.now() - started > 3000) {
+        throw new Error(`peer CLI wrote nothing; stderr=${stderr.join('')} registrations=${JSON.stringify(bridge.registrations)}`);
+      }
+      await delay(20);
+    }
+    assert.deepEqual(bridge.registrations, [{ op: 'register', client: 'claude-code', sessionId: 'sess-cli' }]);
+    assert.deepEqual(
+      lines.map((line) => JSON.parse(line.trim())),
+      [{ op: 'deliver', messageText: 'claude-socket-text' }],
+    );
+  } finally {
+    if (connection) connection.close();
+    if (previous === undefined) delete process.env.AGENT_LINK_SOCKET;
+    else process.env.AGENT_LINK_SOCKET = previous;
     await bridge.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
